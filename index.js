@@ -1,7 +1,7 @@
 var model = null;
 var color_pos = [9, 119, 189];
 var color_neg = [245, 148, 37];
-let DIGITS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜß';
+let DIGITS = '0123456789';
 
 async function load() {
   model = await tf.loadLayersModel('05-model/model.json');
