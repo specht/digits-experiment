@@ -167,7 +167,9 @@ async function handleQueue() {
         dim.push(1);
     const inputTensor = new ort.Tensor("float32", pixels, dim);
 
+    let t0 = performance.now();
     const results = await model._model.run({ [model.layers[0].name]: inputTensor });
+    let t1 = performance.now();
     const outputTensor = results[model._model.outputNames[0]];
     const prediction = outputTensor.data.indexOf(Math.max(...outputTensor.data));
 
@@ -207,7 +209,7 @@ async function handleQueue() {
         if (Math.abs(min) > Math.abs(max)) scale = -1.0 / min; else scale = 1.0 / max;
         dot_colors.push({colors: layer_colors, min: min, max: max, scale: scale});
     }
-    self.postMessage({ dot_colors: dot_colors });
+    self.postMessage({ dot_colors: dot_colors, duration: t1 - t0 });
 
     this.setTimeout(handleQueue, 0);
 }

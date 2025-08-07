@@ -50,6 +50,7 @@ async function load() {
 
 let worker = new Worker(`worker.js?${Math.random()}`);
 let drawn_something = false;
+let durations = [];
 
 worker.addEventListener('message', function (e) {
     if ('prediction' in e.data) {
@@ -84,6 +85,12 @@ worker.addEventListener('message', function (e) {
             }
         }
         ctx.restore();
+        durations.unshift(e.data.duration);
+        durations = durations.slice(0, 10);
+        let mean = 0;
+        for (let d of durations) mean += d;
+        mean /= durations.length;
+        document.getElementById('stats').innerHTML = `Inference: ${mean.toFixed(2)} ms.`;
     }
 });
 
@@ -249,7 +256,7 @@ function resize() {
             }
             if (layer_index === 0) name = 'input';
             if (layer_index === model.layers.length - 1) name = 'output';
-            label.innerHTML = name;
+            label.innerHTML = `<strong>${name}</strong>`;
             label.innerHTML += "<br>";
             label.innerHTML += `(${model.layers[layer_index].outputShape.slice(1).filter((x) => x !== null).map((x) => x ?? '?').join('×')})`;
             document.body.appendChild(label);
@@ -370,8 +377,14 @@ function resize() {
 
         for (let i = start; i < end; i++) {
             const line = allLines[i];
-            overlayCtx.moveTo(line.from[0] + line.from[2] / 2, line.from[1] + line.from[3] / 2);
-            overlayCtx.lineTo(line.to[0] + line.to[2] / 2, line.to[1] + line.to[3] / 2);
+            let x0 = line.from[0] + line.from[2] / 2;
+            let y0 = line.from[1] + line.from[3] / 2;
+            let x1 = line.to[0] + line.to[2] / 2;
+            let y1 = line.to[1] + line.to[3] / 2;
+            if (Math.round(y0) !== Math.round(y1)) {
+                overlayCtx.moveTo(x0, y0);
+                overlayCtx.lineTo(x1, y1);
+            }
         }
 
         overlayCtx.stroke();
