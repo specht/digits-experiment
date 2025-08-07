@@ -1,0 +1,7 @@
+01-pages/*
+02-cache/*
+03-digits/*
+04-sheets/*
+05-model/*
+model.onnx
+.venv

@@ -1,19 +1,60 @@
-importScripts("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest");
+importScripts("https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js");
+// ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4; // optional
+// ort.env.wasm.simd = true;
+// ort.env.wasm.proxy = true;
+ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
+
+class Model {
+    constructor(_model) {
+        this._model = _model;
+        this.layers = [];
+        this.layers.push({
+            name: _model.inputMetadata[0].name,
+            outputShape: _model.inputMetadata[0].shape,
+        });
+        for (let i = 1; i < _model.outputMetadata.length - 1; i++) {
+            if (Number.isInteger(_model.outputMetadata[i].shape[1])) {
+                let shape = _model.outputMetadata[i].shape;
+                for (let k = 0; k < shape.length; k++) {
+                    if (typeof shape[k] === 'string') {
+                        shape[k] = 1;
+                    }
+                }
+                shape = [shape[0], ...shape.slice(1).reverse()];
+                this.layers.push({
+                    name: _model.outputMetadata[i].name,
+                    outputShape: shape,
+                });
+            }
+        }
+        let shape = _model.outputMetadata[0].shape;
+        for (let k = 0; k < shape.length; k++) {
+            if (typeof shape[k] === 'string') {
+                shape[k] = 1;
+            }
+        }
+        shape = [shape[0], ...shape.slice(1).reverse()];
+        this.layers.push({
+            name: _model.outputMetadata[0].name,
+            outputShape: shape,
+        });
+    }
+}
 
 var queue = [];
 var model = null;
 
-tf.loadLayersModel('05-model/model.json').then(function(m) {
-    model = m;
+ort.InferenceSession.create("model.onnx", { executionProviders: ['wasm'] }).then(function (m) {
+    model = new Model(m);
     console.log("Loaded model in web worker!");
-    self.addEventListener('message', function(e) {
+    self.addEventListener('message', function (e) {
         let imageData = e.data.imageData;
         queue.push(imageData);
         this.setTimeout(handleQueue, 0);
     });
 });
 
-function handleQueue() {
+async function handleQueue() {
     if (queue.length === 0) return;
 
     let imageData = queue.pop();
@@ -74,94 +115,99 @@ function handleQueue() {
     if (right <= left) right = left + 1;
     if (bottom <= top) bottom = top + 1;
 
-    // crop the image data to the bounding box
     let c = new OffscreenCanvas(imageData.width, imageData.height);
     let ctx = c.getContext('2d');
     ctx.putImageData(imageData, 0, 0);
 
     let cropped = ctx.getImageData(left, top, right - left, bottom - top);
 
-    // create a temporary canvas to put the cropped image data
     let tempCanvas = new OffscreenCanvas(right - left, bottom - top);
     let tempCtx = tempCanvas.getContext('2d');
     tempCtx.putImageData(cropped, 0, 0);
 
-    // create a new canvas to scale the image
     let canvasScaled = new OffscreenCanvas(28, 28);
     let ctxScaled = canvasScaled.getContext('2d');
     ctxScaled.fillStyle = 'white';
     ctxScaled.fillRect(0, 0, 28, 28);
 
-    // calculate the width and height of the cropped image
     let croppedWidth = right - left;
     let croppedHeight = bottom - top;
 
-    // calculate the scaling factors
     let scaleX = 26 / croppedWidth;
     let scaleY = 26 / croppedHeight;
 
-    // use the smaller of the two scaling factors
     let scale = Math.min(scaleX, scaleY);
 
-    // calculate the size of the scaled image
     let scaledWidth = croppedWidth * scale;
     let scaledHeight = croppedHeight * scale;
 
-    // calculate the position to center the image
     let posX = (28 - scaledWidth) / 2;
     let posY = (28 - scaledHeight) / 2;
 
-    // draw the cropped image on the new canvas, scaling it down and centering it
     ctxScaled.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height, posX, posY, scaledWidth, scaledHeight);
 
-    // // get the image data from the scaled canvas
     let finalImageData = ctxScaled.getImageData(0, 0, 28, 28);
-    // self.postMessage({update_pixels: finalImageData});
-    // return;
 
     const sourceCanvas = new OffscreenCanvas(28, 28);
     const sourceCtx = sourceCanvas.getContext('2d');
 
-    // disable antialiasing
     sourceCtx.imageSmoothingEnabled = false;
 
-    // render the finalImageData to the source canvas
     sourceCtx.putImageData(finalImageData, 0, 0);
 
-    var img = tf.browser.fromPixels(sourceCanvas, 1);
+    const ctxData = sourceCtx.getImageData(0, 0, 28, 28).data;
+    const pixels = new Float32Array(28 * 28);
 
-    // let x = tf.cast(img.reshape([1, 28, 28]), 'float32');
-    // if (model.layers[0].inputSpec[0].shape.length === 4)
-        // x = tf.cast(img.reshape([1, 28, 28, 1]), 'float32');
-    x = tf.cast(img.reshape(model.layers[0].inputSpec[0].shape.map((x) => x ?? 1)), 'float32');
-    x = x.div(tf.scalar(255));
+    for (let i = 0; i < 28 * 28; i++) {
+        pixels[i] = 1.0 - ctxData[i * 4] / 255.0;
+    }
 
-    let y = model.predict(x);
-    const prediction = y.argMax(1).dataSync()[0];
-    // console.log(y.argMax(1).dataSync()[0]);
-    self.postMessage({prediction: prediction});
+    let dim = [1, 28, 28];
+    if (model.layers[0].outputShape.length === 4)
+        dim.push(1);
+    const inputTensor = new ort.Tensor("float32", pixels, dim);
+
+    const results = await model._model.run({ [model.layers[0].name]: inputTensor });
+    const outputTensor = results[model._model.outputNames[0]];
+    const prediction = outputTensor.data.indexOf(Math.max(...outputTensor.data));
+
+    self.postMessage({ prediction });
 
     let dot_colors = [];
 
     for (let layer = 0; layer < model.layers.length; layer++) {
         let layer_colors = [];
-        let hiddenLayer = model.getLayer(null, layer);
-        let hiddenModel = tf.model({inputs: model.inputs, outputs: hiddenLayer.output});
-        let hiddenOutput = hiddenModel.predict(x).dataSync();
-        for (let i = 0; i < hiddenOutput.length; i++) {
-            let value = hiddenOutput[i];
-            // if (layer > 1) value = 1.0 - 1.0 / Math.exp(value);
-            // if (value < 0.0) value = 0.0;
-            // if (value > 1.0) value = 1.0;
-            if (value < -1.0) value = -1.0;
-            if (value > 1.0) value = 1.0;
-            // if (layer == model.layers.length - 1) value = 1.0 - value;
-
-            layer_colors.push(value);
+        let hiddenLayer = model.layers[layer];
+        let min = 0.0;
+        let max = 1.0;
+        if (layer === 0 && croppedWidth > 1 && croppedHeight > 1) {
+            for (let i = 0; i < 28 * 28; i++) {
+                let value = pixels[i];
+                // if (value < -1.0) value = -1.0;
+                // if (value > 1.0) value = 1.0;
+                if (value < min) min = value;
+                if (value > max) max = value;
+                layer_colors.push(value);
+            }
+        } else if (hiddenLayer.name in results) {
+            min = 1e9;
+            max = -1e9;
+            let hiddenOutput = results[hiddenLayer.name].data;
+            for (let i = 0; i < hiddenOutput.length; i++) {
+                let value = hiddenOutput[i];
+                // if (value < -1.0) value = -1.0;
+                // if (value > 1.0) value = 1.0;
+                if (value < min) min = value;
+                if (value > max) max = value;
+                layer_colors.push(value);
+            }
         }
-        dot_colors.push(layer_colors);
+        // if (layer === 0 || layer === model.layers.length - 1)
+        let scale = 1.0;
+        if (Math.abs(min) > Math.abs(max)) scale = -1.0 / min; else scale = 1.0 / max;
+        dot_colors.push({colors: layer_colors, min: min, max: max, scale: scale});
     }
-    self.postMessage({dot_colors: dot_colors});
+    self.postMessage({ dot_colors: dot_colors });
 
     this.setTimeout(handleQueue, 0);
 }
