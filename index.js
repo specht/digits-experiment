@@ -81,7 +81,7 @@ worker.addEventListener('message', function (e) {
                         color.push(Math.round(color_pos[i] * value + 255 * (1.0 - value)));
                 }
                 ctx.fillStyle = `rgb(${color[0]},${color[1]},${color[2]})`;
-                ctx.fillRect(box[0] + 0.5, box[1] + 0.5, box[2], box[3]);
+                ctx.fillRect(box[0] + 0.5, box[1] + 0.5, box[2] - 1, box[3] - 1);
             }
         }
         ctx.restore();
@@ -295,7 +295,7 @@ function resize() {
             }
         }
         // if (!drawn_something) {
-        graphCtx.fillStyle = `#ffffffa0`;
+        graphCtx.fillStyle = `#f0f0f0`;
         drawRoundedRect(graphCtx, x0 - 8, y0 - 8, x1 - x0 + 16, y1 - y0 + 16, 8);
         graphCtx.fill();
 

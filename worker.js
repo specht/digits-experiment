@@ -114,6 +114,8 @@ async function handleQueue() {
 
     if (right <= left) right = left + 1;
     if (bottom <= top) bottom = top + 1;
+    right += 1;
+    bottom += 1;
 
     let c = new OffscreenCanvas(imageData.width, imageData.height);
     let ctx = c.getContext('2d');
